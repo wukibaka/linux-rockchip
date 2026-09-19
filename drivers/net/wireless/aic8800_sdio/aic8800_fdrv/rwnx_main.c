@@ -6855,6 +6855,7 @@ int rwnx_cfg80211_init(struct rwnx_plat *rwnx_plat, void **platform_data)
 	rwnx_hw->apmStaloss_wq = create_singlethread_workqueue("apmStaloss_wq");
 	if (!rwnx_hw->apmStaloss_wq) {
 		txrx_err("insufficient memory to create apmStaloss workqueue.\n");
+		ret = -ENOMEM;
 		goto err_cache;
 	}
 
@@ -7134,11 +7135,21 @@ err_debugfs:
 err_register_wiphy:
 err_lmac_reqs:
 	printk("err_lmac_reqs\n");
+#ifdef AICWF_SDIO_SUPPORT
+	aicwf_sdio_quiesce(rwnx_hw->sdiodev);
+#endif
+	destroy_workqueue(rwnx_hw->apmStaloss_wq);
 	rwnx_platform_off(rwnx_hw, NULL);
 //err_platon:
 //err_config:
 	kmem_cache_destroy(rwnx_hw->sw_txhdr_cache);
+	goto err_free_wiphy;
 err_cache:
+#ifdef AICWF_SDIO_SUPPORT
+	aicwf_sdio_quiesce(rwnx_hw->sdiodev);
+#endif
+	kmem_cache_destroy(rwnx_hw->sw_txhdr_cache);
+err_free_wiphy:
     aicwf_wakeup_lock_deinit(rwnx_hw);
 	wiphy_free(wiphy);
 err_out:

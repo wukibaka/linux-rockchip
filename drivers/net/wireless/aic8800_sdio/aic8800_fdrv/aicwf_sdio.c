@@ -598,7 +598,7 @@ static int aicwf_sdio_probe(struct sdio_func *func,
 	err = aicwf_rwnx_sdio_platform_init(sdiodev);
 	if (err) {
 		sdio_err("sdio platform init fail: %d\n", err);
-		goto fail;
+		goto fail_bus;
 	}
 
 	aicwf_hostif_ready();
@@ -635,6 +635,13 @@ static int aicwf_sdio_probe(struct sdio_func *func,
     device_disable_async_suspend(sdiodev->dev);
 
 	return 0;
+fail_bus:
+	aicwf_sdio_quiesce(sdiodev);
+	/* Also release the command manager after a firmware command timeout. */
+	if (sdiodev->cmd_mgr.cmd_wq)
+		rwnx_cmd_mgr_deinit(&sdiodev->cmd_mgr);
+	sdiodev->cmd_mgr.state = RWNX_CMD_MGR_STATE_DEINIT;
+	aicwf_sdio_release(sdiodev);
 fail:
 	aicwf_sdio_func_deinit(sdiodev);
 	dev_set_drvdata(&func->dev, NULL);
@@ -2082,6 +2089,50 @@ static struct aicwf_bus_ops aicwf_sdio_bus_ops = {
 	.txdata = aicwf_sdio_bus_txdata,
 	.txmsg = aicwf_sdio_bus_txmsg,
 };
+
+/* The bus must be fully initialized. Keep resources alive until callbacks stop. */
+void aicwf_sdio_quiesce(struct aic_sdio_dev *sdiodev)
+{
+	struct aicwf_bus *bus_if = sdiodev->bus_if;
+
+	WRITE_ONCE(bus_if->state, BUS_DOWN_ST);
+	sdio_claim_host(sdiodev->func);
+#ifndef CONFIG_FDRV_NO_REG_SDIO
+	sdio_release_irq(sdiodev->func);
+#else
+	set_irq_handler(NULL);
+#endif
+	sdio_release_host(sdiodev->func);
+
+	if (bus_if->bustx_thread) {
+		complete_all(&bus_if->bustx_trgg);
+		kthread_stop(bus_if->bustx_thread);
+		bus_if->bustx_thread = NULL;
+	}
+	if (bus_if->busrx_thread) {
+		complete_all(&bus_if->busrx_trgg);
+		kthread_stop(bus_if->busrx_thread);
+		bus_if->busrx_thread = NULL;
+	}
+#ifdef CONFIG_OOB
+	if (bus_if->busirq_thread) {
+		complete_all(&bus_if->busirq_trgg);
+		kthread_stop(bus_if->busirq_thread);
+		bus_if->busirq_thread = NULL;
+	}
+#endif
+#ifdef CONFIG_SDIO_PWRCTRL
+	if (sdiodev->pwrctl_tsk) {
+		complete_all(&sdiodev->pwrctrl_trgg);
+		kthread_stop(sdiodev->pwrctl_tsk);
+		sdiodev->pwrctl_tsk = NULL;
+	}
+	/* No thread can rearm the timer after this point. */
+	del_timer_sync(&sdiodev->timer);
+#endif
+	if (sdiodev->cmd_mgr.cmd_wq)
+		cancel_work_sync(&sdiodev->cmd_mgr.cmdWork);
+}
 
 void aicwf_sdio_release(struct aic_sdio_dev *sdiodev)
 {

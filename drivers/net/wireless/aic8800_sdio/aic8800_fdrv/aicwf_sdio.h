@@ -148,6 +148,7 @@ int aicwf_sdio_recv_pkt(struct aic_sdio_dev *sdiodev, struct sk_buff *skbbuf, u3
 #endif
 int aicwf_sdio_send_pkt(struct aic_sdio_dev *sdiodev, u8 *buf, uint count);
 void *aicwf_sdio_bus_init(struct aic_sdio_dev *sdiodev);
+void aicwf_sdio_quiesce(struct aic_sdio_dev *sdiodev);
 void aicwf_sdio_release(struct aic_sdio_dev *sdiodev);
 void aicwf_sdio_exit(void);
 void aicwf_sdio_register(void);
